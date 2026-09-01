@@ -5,6 +5,8 @@ import {
 } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
+import { getBlobAuthOptions } from "@/lib/blob-auth";
+
 const supportedExtensions = new Set(["mp3", "wav", "m4a"]);
 const supportedContentTypes = [
   "audio/mpeg",
@@ -18,6 +20,7 @@ const supportedContentTypes = [
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
+    const blobAuth = getBlobAuthOptions(request);
     const body = (await request.json()) as HandleUploadPresignedBody;
     const jsonResponse = await handleUploadPresigned({
       body,
@@ -30,6 +33,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         return {
           token: await issueSignedToken({
+            ...blobAuth,
             pathname,
             operations: ["put"],
             allowedContentTypes: supportedContentTypes,

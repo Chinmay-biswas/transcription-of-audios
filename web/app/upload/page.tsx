@@ -22,15 +22,31 @@ function readableFileSize(bytes: number): string {
 
 async function getBlobSetupError(): Promise<string | null> {
   try {
-    const response = await fetch("/_blob/upload/diagnostic", { cache: "no-store" });
+    const response = await fetch("/api/blob/upload/diagnostic", {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" }
+    });
     if (response.ok) {
       return null;
     }
 
-    const payload = (await response.json()) as { error?: unknown };
-    return typeof payload.error === "string" ? payload.error : null;
+    const payload = await response.json().catch(() => null) as { error?: unknown } | null;
+    if (typeof payload?.error === "string") {
+      return payload.error;
+    }
+
+    if (response.redirected || response.status === 401 || response.status === 403) {
+      return "Vercel Deployment Protection blocked the upload endpoint. In Project Settings > Deployment Protection, turn off Vercel Authentication for Production, then redeploy.";
+    }
+
+    if (response.status === 404) {
+      return "The current deployment does not include the Blob diagnostic route. Redeploy the latest GitHub commit, then refresh this page.";
+    }
+
+    return "The Blob upload check failed with HTTP " + response.status + ". Review the /api/blob/upload/diagnostic request in Vercel Runtime Logs.";
   } catch {
-    return null;
+    return "The browser could not reach the Blob upload endpoint. Check Vercel Deployment Protection and redeploy the latest commit.";
   }
 }
 
@@ -90,9 +106,14 @@ export default function UploadPage() {
     setUploadProgress(1);
 
     try {
+      const setupError = await getBlobSetupError();
+      if (setupError) {
+        throw new Error(setupError);
+      }
+
       const blob = await uploadPresigned("meetings/" + safeFilename(file.name), file, {
         access: "public",
-        handleUploadUrl: "/_blob/upload",
+        handleUploadUrl: "/api/blob/upload",
         multipart: true,
         onUploadProgress: ({ percentage }) => setUploadProgress(Math.round(percentage))
       });
@@ -112,7 +133,7 @@ export default function UploadPage() {
       const message = caughtError instanceof Error
         ? caughtError.message
         : "The meeting could not be processed.";
-      const setupMessage = message === "Vercel Blob: Failed to retrieve the presigned URL"
+      const setupMessage = message.includes("Failed to retrieve the presigned URL")
         ? await getBlobSetupError()
         : null;
       setError(setupMessage || message);

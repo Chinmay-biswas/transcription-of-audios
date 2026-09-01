@@ -1,6 +1,8 @@
 import { issueSignedToken } from "@vercel/blob";
 import { NextResponse } from "next/server";
 
+import { getBlobAuthOptions } from "@/lib/blob-auth";
+
 export const dynamic = "force-dynamic";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -23,12 +25,14 @@ function getSafeSetupMessage(error: unknown): string {
     return "Vercel denied access to this Blob store. In Storage > your Blob store > Projects, reconnect this Vercel project, then redeploy.";
   }
 
-  return "Vercel Blob could not be initialized. Open the latest deployment's Runtime Logs and look for the /_blob/upload request.";
+  return "Vercel Blob could not be initialized. Open the latest deployment's Runtime Logs and look for the /api/blob/upload request.";
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
+    const blobAuth = getBlobAuthOptions(request);
     await issueSignedToken({
+      ...blobAuth,
       pathname: "meetings/__connection-check__.mp3",
       operations: ["put"],
       validUntil: Date.now() + 60_000
