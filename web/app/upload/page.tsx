@@ -20,6 +20,20 @@ function readableFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+async function getBlobSetupError(): Promise<string | null> {
+  try {
+    const response = await fetch("/_blob/upload/diagnostic", { cache: "no-store" });
+    if (response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as { error?: unknown };
+    return typeof payload.error === "string" ? payload.error : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -95,11 +109,13 @@ export default function UploadPage() {
       });
       setResult(pipelineResult);
     } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "The meeting could not be processed."
-      );
+      const message = caughtError instanceof Error
+        ? caughtError.message
+        : "The meeting could not be processed.";
+      const setupMessage = message === "Vercel Blob: Failed to retrieve the presigned URL"
+        ? await getBlobSetupError()
+        : null;
+      setError(setupMessage || message);
     } finally {
       setIsProcessing(false);
     }

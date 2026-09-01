@@ -43,9 +43,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             tokenPayload: JSON.stringify({ purpose: "meeting-audio" })
           }
         };
-      },
-      onUploadCompleted: async () => {
-        // Processing is initiated by the browser after the direct upload completes.
       }
     });
 

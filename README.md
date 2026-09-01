@@ -57,11 +57,14 @@ both Production and Preview:
     QDRANT_COLLECTION=meeting_transcripts_gemini
     WHISPER_MODEL=base
     MAX_AUDIO_BYTES=104857600
-    BLOB_READ_WRITE_TOKEN
+    BLOB_STORE_ID
+    BLOB_WEBHOOK_PUBLIC_KEY
 
-Creating the Blob store in Vercel normally adds BLOB_READ_WRITE_TOKEN
-automatically. Keep GOOGLE_API_KEY, QDRANT_API_KEY, and BLOB_READ_WRITE_TOKEN
-as Secrets.
+Connect the Blob store through Vercel Storage rather than copying those two
+Blob values manually. New Blob connections use short-lived OIDC credentials;
+they do not need BLOB_READ_WRITE_TOKEN in Vercel. Keep GOOGLE_API_KEY and
+QDRANT_API_KEY as Secrets. BLOB_READ_WRITE_TOKEN is only a local-development
+fallback when the Next.js app runs outside Vercel.
 
 ## Local development
 
@@ -85,7 +88,7 @@ Open a second terminal:
     Copy-Item .env.local.example .env.local
     npm run dev
 
-Set BLOB_READ_WRITE_TOKEN in web/.env.local too when running the Next.js upload
+Set BLOB_READ_WRITE_TOKEN in web/.env.local when running the Next.js upload
 route outside vercel dev.
 
 Open http://localhost:3000.
@@ -96,9 +99,13 @@ Open http://localhost:3000.
 2. In Vercel, choose Add New > Project, import that repository, and use the
    repository root as the Root Directory.
 3. In the project's framework settings, choose Services.
-4. Create a public Vercel Blob store from the project's Storage tab.
-5. Add the environment variables listed above.
-6. Deploy.
+4. Create and connect a public Vercel Blob store from the project's Storage tab.
+5. Open Project Settings > Security, enable Secure Backend Access with OIDC
+   Federation, and save. This lets the upload route authenticate to Blob with a
+   short-lived credential.
+6. Add the non-Blob environment variables listed above. The connected Blob
+   store supplies BLOB_STORE_ID and BLOB_WEBHOOK_PUBLIC_KEY automatically.
+7. Deploy (or redeploy after changing the OIDC setting).
 
 vercel.json starts two services in one deployment:
 
