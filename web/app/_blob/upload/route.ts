@@ -1,4 +1,8 @@
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import {
+  handleUploadPresigned,
+  type HandleUploadPresignedBody
+} from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
 const supportedExtensions = new Set(["mp3", "wav", "m4a"]);
@@ -14,21 +18,30 @@ const supportedContentTypes = [
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const body = (await request.json()) as HandleUploadBody;
-    const jsonResponse = await handleUpload({
+    const body = (await request.json()) as HandleUploadPresignedBody;
+    const jsonResponse = await handleUploadPresigned({
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
+      getSignedToken: async (pathname) => {
         const extension = pathname.split(".").pop()?.toLowerCase();
         if (!pathname.startsWith("meetings/") || !extension || !supportedExtensions.has(extension)) {
           throw new Error("Only MP3, WAV, and M4A meeting recordings are accepted.");
         }
 
         return {
-          allowedContentTypes: supportedContentTypes,
-          maximumSizeInBytes: 100 * 1024 * 1024,
-          addRandomSuffix: true,
-          tokenPayload: JSON.stringify({ purpose: "meeting-audio" })
+          token: await issueSignedToken({
+            pathname,
+            operations: ["put"],
+            allowedContentTypes: supportedContentTypes,
+            maximumSizeInBytes: 100 * 1024 * 1024,
+            validUntil: Date.now() + 15 * 60 * 1000
+          }),
+          urlOptions: {
+            allowedContentTypes: supportedContentTypes,
+            maximumSizeInBytes: 100 * 1024 * 1024,
+            addRandomSuffix: true,
+            tokenPayload: JSON.stringify({ purpose: "meeting-audio" })
+          }
         };
       },
       onUploadCompleted: async () => {

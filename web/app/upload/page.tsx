@@ -1,6 +1,6 @@
 "use client";
 
-import { upload } from "@vercel/blob/client";
+import { uploadPresigned } from "@vercel/blob/client";
 import { ChangeEvent, useEffect, useState } from "react";
 
 import { apiRequest, PipelineResult } from "@/lib/api";
@@ -76,7 +76,7 @@ export default function UploadPage() {
     setUploadProgress(1);
 
     try {
-      const blob = await upload("meetings/" + safeFilename(file.name), file, {
+      const blob = await uploadPresigned("meetings/" + safeFilename(file.name), file, {
         access: "public",
         handleUploadUrl: "/_blob/upload",
         multipart: true,
