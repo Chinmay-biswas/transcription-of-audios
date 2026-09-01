@@ -22,7 +22,19 @@ def ensure_supported_filename(filename: str) -> str:
 
 
 def _max_audio_bytes() -> int:
-    return int(os.environ.get("MAX_AUDIO_BYTES", str(DEFAULT_MAX_AUDIO_BYTES)))
+    raw_value = os.environ.get("MAX_AUDIO_BYTES", "").strip()
+    if not raw_value:
+        return DEFAULT_MAX_AUDIO_BYTES
+
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError("MAX_AUDIO_BYTES must be a positive whole number.") from error
+
+    if value <= 0:
+        raise ValueError("MAX_AUDIO_BYTES must be a positive whole number.")
+
+    return value
 
 
 def _is_vercel_blob_url(url: str) -> bool:
@@ -49,8 +61,13 @@ def download_blob_to_tempfile(blob_url: str, filename: str) -> str:
                 raise ValueError("The audio download redirected outside Vercel Blob.")
 
             content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > max_bytes:
-                raise ValueError("The uploaded audio exceeds the configured size limit.")
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    declared_size = None
+                if declared_size is not None and declared_size > max_bytes:
+                    raise ValueError("The uploaded audio exceeds the configured size limit.")
 
             with tempfile.NamedTemporaryFile(
                 prefix="meeting-",

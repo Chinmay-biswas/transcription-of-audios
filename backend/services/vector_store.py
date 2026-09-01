@@ -16,15 +16,24 @@ from qdrant_client import QdrantClient, models
 DEFAULT_COLLECTION = "meeting_transcripts_gemini"
 
 
+def _optional_setting(name: str, default: str) -> str:
+    return os.environ.get(name, "").strip() or default
+
+
 def _required_setting(name: str) -> str:
-    value = os.environ.get(name)
+    value = os.environ.get(name, "").strip()
     if not value:
         raise RuntimeError(f"{name} is not configured.")
     return value
 
 
 def _embedding_dimensions() -> int:
-    value = int(os.environ.get("GEMINI_EMBEDDING_DIMENSIONS", "768"))
+    raw_value = _optional_setting("GEMINI_EMBEDDING_DIMENSIONS", "768")
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError("GEMINI_EMBEDDING_DIMENSIONS must be a positive integer.") from error
+
     if value <= 0:
         raise ValueError("GEMINI_EMBEDDING_DIMENSIONS must be a positive integer.")
     return value
@@ -42,14 +51,14 @@ def _client() -> QdrantClient:
 @lru_cache(maxsize=1)
 def _embeddings() -> GoogleGenerativeAIEmbeddings:
     return GoogleGenerativeAIEmbeddings(
-        model=os.environ.get("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
+        model=_optional_setting("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
         api_key=_required_setting("GOOGLE_API_KEY"),
         output_dimensionality=_embedding_dimensions(),
     )
 
 
 def _collection_name() -> str:
-    return os.environ.get("QDRANT_COLLECTION", DEFAULT_COLLECTION)
+    return _optional_setting("QDRANT_COLLECTION", DEFAULT_COLLECTION)
 
 
 def _ensure_collection(vector_size: int) -> None:

@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from backend.models.schemas import MeetingSummary
 
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
 
 
 def create_gemini_llm() -> ChatGoogleGenerativeAI:
