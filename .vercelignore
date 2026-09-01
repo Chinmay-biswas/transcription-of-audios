@@ -1,0 +1,19 @@
+# Local-only environments and generated output
+.venv/
+web/node_modules/
+web/.next/
+
+# Secrets and runtime data
+.env
+.env.*
+data/
+
+# Undeployed source retained only as an implementation reference
+frontend/
+notebooks/
+
+# Cache and operating-system artifacts
+**/__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

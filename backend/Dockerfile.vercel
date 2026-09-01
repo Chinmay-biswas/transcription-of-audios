@@ -1,0 +1,26 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000 \
+    WHISPER_MODEL=base \
+    WHISPER_MODEL_DIR=/opt/whisper
+
+# Whisper uses FFmpeg to decode uploaded MP3, WAV, and M4A audio.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Bake stable model weights into the image. This avoids a download during a user request.
+RUN python -c "import os, whisper; whisper.load_model(os.environ['WHISPER_MODEL'], download_root=os.environ['WHISPER_MODEL_DIR'])"
+
+COPY . ./backend
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"]

@@ -1,0 +1,18 @@
+# API runtime
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+
+# Local transcription in the Docker container
+openai-whisper>=20231117
+
+# Gemini intelligence extraction and embeddings
+langchain-core>=1.0.0
+langchain-google-genai>=4.3.7
+langchain-text-splitters>=1.1.0
+google-genai>=2.21.0
+
+# Persistent remote vector storage
+qdrant-client>=1.19.0
