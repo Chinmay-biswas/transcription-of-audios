@@ -19,6 +19,9 @@ app = FastAPI(
     title="Meeting Intelligence API",
     description="Whisper transcription, Gemini intelligence extraction, and meeting RAG.",
     version="2.0.0",
+    docs_url="/api/v1/docs",
+    redoc_url=None,
+    openapi_url="/api/v1/openapi.json",
 )
 
 frontend_origins = [
