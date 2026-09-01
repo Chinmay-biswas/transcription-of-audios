@@ -14,6 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
+# Keep PyTorch in a separate, CPU-only layer. Vercel Container Registry accepts
+# compressed layers up to 500 MB; the default PyPI resolution can pull a much
+# larger accelerator-enabled dependency set into one layer.
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "torch==2.6.0"
+
+# openai-whisper reuses the CPU-only torch package installed above.
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Bake stable model weights into the image. This avoids a download during a user request.

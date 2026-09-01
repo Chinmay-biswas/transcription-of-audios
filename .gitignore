@@ -16,5 +16,6 @@ out/
 
 # Runtime data and operating-system files
 data/
+graphify-out/
 .DS_Store
 Thumbs.db

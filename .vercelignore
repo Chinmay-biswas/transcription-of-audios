@@ -14,6 +14,7 @@ notebooks/
 
 # Cache and operating-system artifacts
 **/__pycache__/
+**/graphify-out/
 *.py[cod]
 .DS_Store
 Thumbs.db
