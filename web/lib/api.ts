@@ -23,6 +23,53 @@ export type PipelineResult = {
   intelligence: MeetingIntelligence;
 };
 
+export type MediaKind = "audio" | "video";
+
+export type MediaChunk = {
+  index: number;
+  start_seconds: number;
+  end_seconds: number;
+  transcript_text: string;
+};
+
+export type MediaJobStatus =
+  | "queued"
+  | "processing"
+  | "rolling_up"
+  | "finalizing"
+  | "ready_for_rollup"
+  | "failed"
+  | "completed";
+
+export type MediaJob = {
+  id: string;
+  filename: string;
+  media_kind: MediaKind;
+  status: MediaJobStatus;
+  total_chunks: number;
+  completed_chunks: number;
+  duration_seconds: number;
+  chunk_duration_seconds: number;
+  recent_chunks?: MediaChunk[];
+  final_summary?: MeetingIntelligence | null;
+  last_error?: string | null;
+};
+
+export type CreateMediaJobResponse = {
+  job: MediaJob;
+  resume_token: string;
+};
+
+export type MediaJobStatusResponse = {
+  job: MediaJob;
+};
+
+export type RunMediaJobResponse = {
+  job: MediaJob;
+  action: "segment" | "rollup" | "completed" | "waiting";
+  completed_chunk?: MediaChunk | null;
+};
+
 export type MeetingRecord = {
   id: string;
   filename: string;
@@ -64,6 +111,8 @@ export type ApiHealthResponse = {
   ready: boolean;
   missing_settings: string[];
   invalid_settings: string[];
+  chunk_jobs_ready?: boolean;
+  chunk_jobs_missing_settings?: string[];
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1";
@@ -182,4 +231,38 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     );
   }
   return body as T;
+}
+
+export function createMediaJob(payload: {
+  blob_url: string;
+  filename: string;
+  content_type: string | null;
+}): Promise<CreateMediaJobResponse> {
+  return apiRequest<CreateMediaJobResponse>("/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getMediaJobStatus(
+  jobId: string,
+  resumeToken: string
+): Promise<MediaJobStatusResponse> {
+  return apiRequest<MediaJobStatusResponse>("/jobs/" + encodeURIComponent(jobId) + "/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resume_token: resumeToken })
+  });
+}
+
+export function runNextMediaJobChunk(
+  jobId: string,
+  resumeToken: string
+): Promise<RunMediaJobResponse> {
+  return apiRequest<RunMediaJobResponse>("/jobs/" + encodeURIComponent(jobId) + "/run-next", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resume_token: resumeToken })
+  });
 }

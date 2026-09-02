@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
@@ -10,7 +11,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from backend.models.schemas import MeetingAnalysis
+from backend.models.schemas import MeetingAnalysis, MeetingSummary
 
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
@@ -119,6 +120,71 @@ Never output Perso-Arabic/Urdu or Devanagari characters.
     )
     if contains_non_roman_hindi_script(repaired.model_dump()):
         raise ValueError("Gemini could not produce a Roman-script transcript.")
+    return repaired
+
+
+def generate_rollup_summary(segment_summaries: list[dict[str, Any]]) -> MeetingSummary:
+    """Reduce a bounded group of segment summaries into one meeting summary.
+
+    Long recordings are reduced in a small tree instead of asking Gemini to read
+    an unbounded transcript in one call. The caller persists each completed
+    reduction, so an interrupted finalization resumes from its saved level.
+    """
+
+    if not segment_summaries:
+        raise ValueError("There are no segment summaries to combine.")
+
+    parser = PydanticOutputParser(pydantic_object=MeetingSummary)
+    source_json = json.dumps(segment_summaries, ensure_ascii=False)
+    prompt = PromptTemplate(
+        template="""
+You are an expert enterprise meeting analyst. Combine these chronological
+partial meeting analyses into one accurate, concise analysis. Deduplicate
+repeated points, preserve uncertainty, and never invent decisions, owners, or
+due dates that are absent from the source.
+
+LANGUAGE AND SCRIPT REQUIREMENTS:
+- If the source describes Hindi, Urdu, or mixed Hindi-English speech, write the
+  result in natural Roman Hinglish using Latin characters only.
+- For an English meeting, write English.
+- Never output Perso-Arabic/Urdu or Devanagari characters.
+
+{format_instructions}
+
+--- CHRONOLOGICAL SEGMENT ANALYSES ---
+{segment_summaries}
+""",
+        input_variables=["segment_summaries"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    summary = (prompt | create_gemini_llm() | parser).invoke(
+        {"segment_summaries": source_json}
+    )
+    if not contains_non_roman_hindi_script(summary.model_dump()):
+        return summary
+
+    repair_prompt = PromptTemplate(
+        template="""
+Rewrite this structured meeting summary using Latin characters only. For Hindi,
+Urdu, or Hinglish use natural Roman Hinglish; for English use English. Preserve
+facts and the exact schema. Never emit Perso-Arabic/Urdu or Devanagari script.
+
+{format_instructions}
+
+--- SOURCE ANALYSES ---
+{segment_summaries}
+
+--- DRAFT TO REPAIR ---
+{draft}
+""",
+        input_variables=["segment_summaries", "draft"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    repaired = (repair_prompt | create_gemini_llm() | parser).invoke(
+        {"segment_summaries": source_json, "draft": summary.model_dump_json()}
+    )
+    if contains_non_roman_hindi_script(repaired.model_dump()):
+        raise ValueError("Gemini could not produce a Roman-script meeting summary.")
     return repaired
 
 

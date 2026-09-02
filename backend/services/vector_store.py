@@ -14,6 +14,7 @@ from qdrant_client import QdrantClient, models
 
 
 DEFAULT_COLLECTION = "meeting_transcripts_gemini"
+DEFAULT_EMBEDDING_BATCH_SIZE = 24
 
 
 def _optional_setting(name: str, default: str) -> str:
@@ -84,6 +85,29 @@ def _embed_documents(chunks: list[str]) -> list[list[float]]:
     )
 
 
+def _embedding_batch_size() -> int:
+    raw_value = _optional_setting("GEMINI_EMBEDDING_BATCH_SIZE", str(DEFAULT_EMBEDDING_BATCH_SIZE))
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError("GEMINI_EMBEDDING_BATCH_SIZE must be a positive integer.") from error
+    if value <= 0:
+        raise ValueError("GEMINI_EMBEDDING_BATCH_SIZE must be a positive integer.")
+    return value
+
+
+def _embed_documents_in_batches(chunks: list[str]) -> list[list[float]]:
+    """Avoid one oversized Gemini embeddings request for a long recording."""
+
+    vectors: list[list[float]] = []
+    batch_size = _embedding_batch_size()
+    for start in range(0, len(chunks), batch_size):
+        vectors.extend(_embed_documents(chunks[start : start + batch_size]))
+    if len(vectors) != len(chunks):
+        raise RuntimeError("Gemini returned an unexpected number of embeddings.")
+    return vectors
+
+
 def _embed_query(query: str) -> list[float]:
     return _embeddings().embed_query(
         query,
@@ -114,7 +138,7 @@ def save_meeting_to_db(
     if not chunks:
         raise ValueError("No indexable transcript chunks were generated.")
 
-    vectors = _embed_documents(chunks)
+    vectors = _embed_documents_in_batches(chunks)
     _ensure_collection(len(vectors[0]))
     created_at = datetime.now(timezone.utc).isoformat()
 
@@ -128,6 +152,7 @@ def save_meeting_to_db(
                 "blob_url": blob_url or "",
                 "document": chunk,
                 "summary": summary,
+                "meeting_status": "completed",
                 "created_at": created_at,
             },
         )
@@ -141,6 +166,100 @@ def save_meeting_to_db(
     )
 
 
+def save_meeting_segment_to_db(
+    *,
+    meeting_id: str,
+    filename: str,
+    transcript: str,
+    blob_url: str,
+    segment_index: int,
+    start_seconds: float,
+    end_seconds: float,
+    segment_summary: dict[str, Any],
+) -> None:
+    """Persist one completed media interval using stable, retry-safe point IDs.
+
+    These points remain hidden from cross-meeting history while the job is in
+    progress. ``finalize_meeting_in_db`` promotes them only after the complete
+    meeting summary has been written successfully.
+    """
+
+    if not transcript.strip():
+        return
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=150,
+        length_function=len,
+    )
+    chunks = text_splitter.split_text(transcript)
+    if not chunks:
+        return
+
+    vectors = _embed_documents_in_batches(chunks)
+    _ensure_collection(len(vectors[0]))
+    created_at = datetime.now(timezone.utc).isoformat()
+    points = [
+        models.PointStruct(
+            id=str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{meeting_id}:segment:{segment_index}:part:{part_index}",
+                )
+            ),
+            vector=vector,
+            payload={
+                "meeting_id": meeting_id,
+                "filename": filename,
+                "blob_url": blob_url,
+                "document": chunk,
+                "summary": segment_summary,
+                "meeting_status": "processing",
+                "segment_index": segment_index,
+                "start_seconds": round(float(start_seconds), 3),
+                "end_seconds": round(float(end_seconds), 3),
+                "created_at": created_at,
+            },
+        )
+        for part_index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
+    ]
+    _client().upsert(
+        collection_name=_collection_name(),
+        points=points,
+        wait=True,
+    )
+
+
+def finalize_meeting_in_db(*, meeting_id: str, summary: dict[str, Any]) -> None:
+    """Promote all committed intervals to one searchable completed meeting."""
+
+    client = _client()
+    name = _collection_name()
+    if not client.collection_exists(name):
+        # A silent recording has no transcript points to promote. The durable
+        # Mongo job still contains its completion state and final analysis.
+        return
+    client.set_payload(
+        collection_name=name,
+        payload={
+            "meeting_status": "completed",
+            "summary": summary,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+        points=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="meeting_id",
+                        match=models.MatchValue(value=meeting_id),
+                    )
+                ]
+            )
+        ),
+        wait=True,
+    )
+
+
 def _query_points(
     query: str,
     *,
@@ -149,10 +268,25 @@ def _query_points(
 ) -> list[models.ScoredPoint]:
     vector = _embed_query(query)
     _ensure_collection(len(vector))
+    # Segment points are written as checkpoints before the whole meeting is
+    # finalized. Hide only explicit in-progress points, keeping older records
+    # (which predate this field) searchable for backward compatibility.
+    processing_filter = models.FieldCondition(
+        key="meeting_status",
+        match=models.MatchValue(value="processing"),
+    )
+    if query_filter is None:
+        effective_filter = models.Filter(must_not=[processing_filter])
+    else:
+        effective_filter = models.Filter(
+            must=list(query_filter.must or []),
+            should=query_filter.should,
+            must_not=[*(query_filter.must_not or []), processing_filter],
+        )
     response = _client().query_points(
         collection_name=_collection_name(),
         query=vector,
-        query_filter=query_filter,
+        query_filter=effective_filter,
         limit=n_results,
         with_payload=True,
         with_vectors=False,
@@ -219,6 +353,8 @@ def _all_meeting_records() -> list[dict[str, Any]]:
         )
         for point in points:
             payload = point.payload or {}
+            if payload.get("meeting_status") == "processing":
+                continue
             meeting_id = payload.get("meeting_id")
             if not meeting_id or meeting_id in meetings:
                 continue

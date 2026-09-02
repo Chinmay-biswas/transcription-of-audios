@@ -6,7 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WHISPER_MODEL=base \
     WHISPER_MODEL_DIR=/opt/whisper
 
-# Whisper uses FFmpeg to decode uploaded MP3, WAV, and M4A audio.
+# FFmpeg/ffprobe extract bounded audio intervals from MP3, WAV, M4A, MP4, MOV,
+# and WebM Blob sources before Whisper transcribes them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*

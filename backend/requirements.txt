@@ -16,3 +16,6 @@ google-genai>=2.21.0
 
 # Persistent remote vector storage
 qdrant-client>=1.19.0
+
+# Durable resumable media-job checkpoints
+pymongo>=4.12.0

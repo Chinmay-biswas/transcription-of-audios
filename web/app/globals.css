@@ -300,6 +300,20 @@ a {
   height: 42px;
 }
 
+.video-preview {
+  width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #05070b;
+}
+
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .progress-region {
   display: grid;
   gap: 8px;
@@ -342,8 +356,54 @@ a {
   color: #ffc0c0;
 }
 
+.alert-notice {
+  border: 1px solid rgba(116, 240, 197, 0.26);
+  background: rgba(116, 240, 197, 0.08);
+  color: #c9ffed;
+}
+
 .result-section {
   margin-top: 34px;
+}
+
+.job-progress-section {
+  margin-top: 24px;
+}
+
+.segment-list {
+  display: grid;
+  max-height: 520px;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.segment-card {
+  border: 1px solid rgba(155, 169, 191, 0.17);
+  border-radius: 12px;
+  padding: 15px 16px;
+  background: rgba(18, 24, 38, 0.76);
+}
+
+.segment-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.segment-card-heading span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.segment-card p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .result-banner {
@@ -778,5 +838,15 @@ select:focus,
 
   .chat-composer .button {
     width: 100%;
+  }
+
+  .upload-actions .button {
+    width: 100%;
+  }
+
+  .segment-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 }

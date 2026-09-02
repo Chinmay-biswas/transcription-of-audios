@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -60,3 +60,52 @@ class TranscriptionResponse(BaseModel):
     filename: str
     transcript_text: str
     duration_seconds: float
+
+
+class MediaJobCreateRequest(BaseModel):
+    """A durable, Blob-backed audio or video processing request."""
+
+    blob_url: str = Field(..., min_length=1)
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: Optional[str] = Field(default=None, max_length=100)
+
+
+class MediaJobResumeRequest(BaseModel):
+    """Capability token required to inspect or continue a processing job."""
+
+    resume_token: str = Field(..., min_length=1, max_length=512)
+
+
+class MediaJobChunk(BaseModel):
+    """One durably completed time segment shown in the upload UI."""
+
+    index: int = Field(..., ge=0)
+    start_seconds: float = Field(..., ge=0)
+    end_seconds: float = Field(..., ge=0)
+    transcript_text: str
+
+
+class MediaJobStatus(BaseModel):
+    """Secret-free durable progress returned to the browser."""
+
+    id: str
+    status: str
+    filename: str
+    media_kind: Literal["audio", "video"]
+    total_chunks: int = Field(..., ge=0)
+    completed_chunks: int = Field(..., ge=0)
+    duration_seconds: float = Field(..., ge=0)
+    chunk_duration_seconds: float = Field(..., gt=0)
+    final_summary: Optional[MeetingSummary] = None
+    recent_chunks: List[MediaJobChunk] = Field(default_factory=list)
+    last_error: Optional[str] = None
+
+
+class MediaJobResponse(BaseModel):
+    """Response shared by job creation, status, and one-step processing calls."""
+
+    status: Literal["success"] = "success"
+    action: Literal["segment", "rollup", "completed", "waiting"]
+    job: MediaJobStatus
+    completed_chunk: Optional[MediaJobChunk] = None
+    resume_token: Optional[str] = None

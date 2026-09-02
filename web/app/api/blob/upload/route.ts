@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 
 import { getBlobAuthOptions } from "@/lib/blob-auth";
 
-const supportedExtensions = new Set(["mp3", "wav", "m4a"]);
+const supportedExtensions = new Set(["mp3", "wav", "m4a", "mp4", "mov", "webm"]);
 const supportedContentTypes = [
   "audio/mpeg",
   "audio/mp3",
@@ -15,12 +15,31 @@ const supportedContentTypes = [
   "audio/x-wav",
   "audio/mp4",
   "audio/x-m4a",
-  "audio/m4a"
+  "audio/m4a",
+  "audio/webm",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm"
 ];
+const defaultMaxMediaBytes = 2 * 1024 * 1024 * 1024;
+
+function getMaxMediaBytes(): number {
+  const configured = process.env.MAX_MEDIA_BYTES?.trim();
+  if (!configured) {
+    return defaultMaxMediaBytes;
+  }
+
+  const bytes = Number(configured);
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) {
+    throw new Error("MAX_MEDIA_BYTES must be a positive whole number.");
+  }
+  return bytes;
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const blobAuth = getBlobAuthOptions(request);
+    const maxMediaBytes = getMaxMediaBytes();
     const body = (await request.json()) as HandleUploadPresignedBody;
     const jsonResponse = await handleUploadPresigned({
       body,
@@ -28,7 +47,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       getSignedToken: async (pathname) => {
         const extension = pathname.split(".").pop()?.toLowerCase();
         if (!pathname.startsWith("meetings/") || !extension || !supportedExtensions.has(extension)) {
-          throw new Error("Only MP3, WAV, and M4A meeting recordings are accepted.");
+          throw new Error("Only MP3, WAV, M4A, MP4, MOV, and WebM meeting recordings are accepted.");
         }
 
         return {
@@ -37,12 +56,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             pathname,
             operations: ["put"],
             allowedContentTypes: supportedContentTypes,
-            maximumSizeInBytes: 100 * 1024 * 1024,
+            maximumSizeInBytes: maxMediaBytes,
             validUntil: Date.now() + 15 * 60 * 1000
           }),
           urlOptions: {
             allowedContentTypes: supportedContentTypes,
-            maximumSizeInBytes: 100 * 1024 * 1024,
+            maximumSizeInBytes: maxMediaBytes,
             addRandomSuffix: true,
             tokenPayload: JSON.stringify({ purpose: "meeting-audio" })
           }

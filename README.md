@@ -4,9 +4,10 @@ This is a deployment-ready copy of the original Meeting Intelligence Pipeline.
 It replaces the local-only Streamlit, file-system, and ChromaDB pieces with:
 
 - Next.js for the web interface
-- Vercel Blob for browser-to-storage audio uploads
-- FastAPI + Docker + Whisper for audio transcription
+- Vercel Blob multipart upload for browser-to-storage audio and video files
+- FastAPI + Docker + FFmpeg + Whisper for bounded media-segment transcription
 - Gemini for Roman Hinglish conversion, structured meeting intelligence, and embeddings
+- MongoDB for durable media-job checkpoints, retry, and browser-refresh resume
 - Qdrant Cloud for durable meeting search and chat
 
 The original project remains unchanged at:
@@ -16,16 +17,18 @@ The original project remains unchanged at:
 ## Architecture
 
     Browser (Next.js)
-      - uploads audio directly to Vercel Blob
-      - calls /api/v1/process-blob
+      - multipart-uploads one original audio/video file directly to Vercel Blob
+      - creates a durable media job and requests one saved work unit at a time
               |
               v
     FastAPI container service
-      - downloads the Blob object temporarily
-      - transcribes with Whisper
-      - converts Hindi/Urdu speech to Roman Hinglish with Gemini
-      - extracts summary, decisions, tasks with Gemini
-      - stores embeddings and metadata in Qdrant Cloud
+      - FFprobes the Blob and uses FFmpeg to extract one valid time segment
+      - transcribes the segment with Whisper and Romanizes it with Gemini
+      - checkpoints the segment in MongoDB and indexes it in Qdrant
+      - reduces saved segment summaries in bounded Gemini batches
+
+    MongoDB keeps the manifest, segment state, retry lease, and final result.
+    Qdrant exposes only completed meetings to search/history.
 
 ## Before you deploy
 
@@ -33,8 +36,9 @@ Create these external resources first:
 
 1. A Gemini API key in Google AI Studio.
 2. A Qdrant Cloud cluster and API key. The free tier is sufficient for a demo.
-3. A Vercel Blob store connected to this Vercel project.
-4. A GitHub repository containing this copied project.
+3. A MongoDB Atlas database (or another reachable MongoDB deployment).
+4. A Vercel Blob store connected to this Vercel project.
+5. A GitHub repository containing this copied project.
 
 > This version uses a public Blob store so the container can download uploaded
 > recordings without exposing storage credentials to the browser. It is suitable
@@ -56,8 +60,13 @@ both Production and Preview:
     QDRANT_URL
     QDRANT_API_KEY
     QDRANT_COLLECTION=meeting_transcripts_gemini
+    MONGODB_URI
+    MONGODB_DATABASE=meeting_intelligence
     WHISPER_MODEL=base
     MAX_AUDIO_BYTES=104857600
+    MAX_MEDIA_BYTES=2147483648
+    MEDIA_CHUNK_DURATION_SECONDS=60
+    MEDIA_ROLLUP_BATCH_SIZE=10
     BLOB_STORE_ID
     BLOB_WEBHOOK_PUBLIC_KEY
 
@@ -79,6 +88,8 @@ fallback when the Next.js app runs outside Vercel.
     python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 
 Fill in the real Gemini and Qdrant values in .env before using the API.
+For resumable audio/video jobs, also fill in MONGODB_URI. Do not put that URI
+in `web/.env.local` or commit it to Git.
 
 ### 2. Frontend
 
@@ -92,6 +103,9 @@ Open a second terminal:
 Set BLOB_READ_WRITE_TOKEN in web/.env.local when running the Next.js upload
 route outside vercel dev.
 
+Set NEXT_PUBLIC_MAX_MEDIA_BYTES to the same value as MAX_MEDIA_BYTES when you
+change the Blob upload limit.
+
 Open http://localhost:3000.
 
 ## Deploy to Vercel
@@ -104,7 +118,8 @@ Open http://localhost:3000.
 5. Open Project Settings > Security, enable Secure Backend Access with OIDC
    Federation, and save. This lets the upload route authenticate to Blob with a
    short-lived credential.
-6. Add the non-Blob environment variables listed above. The connected Blob
+6. Add the non-Blob environment variables listed above, including MONGODB_URI.
+   The connected Blob
    store supplies BLOB_STORE_ID and BLOB_WEBHOOK_PUBLIC_KEY automatically.
 7. Deploy (or redeploy after changing the OIDC setting).
 
@@ -113,7 +128,7 @@ vercel.json starts two services in one deployment:
 - web: the Next.js frontend at /
 - api: the Dockerized FastAPI backend behind /api/v1/*
 
-The API service includes FFmpeg and the Whisper base model. Vercel may require
+The API service includes FFmpeg, FFprobe, and the Whisper base model. Vercel may require
 Large Functions for this container because Whisper, PyTorch, FFmpeg, and model
 weights can exceed the standard function package allowance. Enable Large
 Functions in Vercel before deploying if the build reports a size-limit error.
@@ -137,3 +152,21 @@ For a local Vercel-style multi-service run:
 
 The frontend/ directory is retained only as a reference to the original
 Streamlit interface. Vercel deploys the web/ Next.js application instead.
+
+## Resumable audio and video processing
+
+The upload page accepts MP3, WAV, M4A, MP4, MOV, and WebM. Vercel Blob handles
+the large-file transfer using multipart upload. After the source Blob is fully
+uploaded, the app creates a MongoDB job with 60-second time segments by default.
+
+Each `Run next` request processes exactly one segment: FFmpeg extracts valid
+audio for that time range, Whisper transcribes it, Gemini produces Roman
+Hinglish where needed, and MongoDB marks that segment complete. If a request,
+browser tab, or deployment fails, press **Resume from saved checkpoint**. The
+completed segments are retained and only the first unfinished segment retries.
+
+There is no hard total meeting-duration limit imposed by the application. Long
+recordings are handled as many bounded requests and the final intelligence is
+combined as a saved summary tree. A browser must remain open to request the
+next work unit; for unattended multi-hour processing, use a queue/worker or
+Vercel Sandbox/Workflow on top of the same MongoDB manifest.

@@ -17,8 +17,11 @@ from backend.api import routes
 
 app = FastAPI(
     title="Meeting Intelligence API",
-    description="Whisper transcription, Gemini intelligence extraction, and meeting RAG.",
-    version="2.0.0",
+    description=(
+        "Whisper transcription, Gemini intelligence extraction, Qdrant meeting RAG, "
+        "and MongoDB-backed resumable audio/video processing."
+    ),
+    version="2.1.0",
     docs_url="/api/v1/docs",
     redoc_url=None,
     openapi_url="/api/v1/openapi.json",
