@@ -57,7 +57,10 @@ export async function POST(request: Request): Promise<NextResponse> {
             operations: ["put"],
             allowedContentTypes: supportedContentTypes,
             maximumSizeInBytes: maxMediaBytes,
-            validUntil: Date.now() + 15 * 60 * 1000
+            // A large multipart transfer can take longer than the old 15-minute
+            // window on slower connections. The signed token is still limited
+            // to one pathname and a put operation.
+            validUntil: Date.now() + 60 * 60 * 1000
           }),
           urlOptions: {
             allowedContentTypes: supportedContentTypes,
