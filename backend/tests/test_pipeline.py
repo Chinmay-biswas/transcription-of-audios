@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from langchain_core.language_models.fake import FakeListLLM
 
 from backend.api import routes
 from backend.main import app
+from backend.models.schemas import (
+    MeetingAnalysis,
+    TranscriptionResponse,
+)
 from backend.services.blob_storage import DEFAULT_MAX_AUDIO_BYTES, _max_audio_bytes
-from backend.services.vector_store import DEFAULT_COLLECTION, _collection_name, _embedding_dimensions
+from backend.services.llm_engine import (
+    contains_non_roman_hindi_script,
+    generate_summary_and_tasks,
+)
+from backend.services.vector_store import (
+    DEFAULT_COLLECTION,
+    _collection_name,
+    _embedding_dimensions,
+)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -71,6 +85,93 @@ class PipelineErrorTests(unittest.TestCase):
         response = routes._as_http_error(raised.exception)
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.detail["stage"], "transcription")
+
+    def test_roman_script_policy_detects_urdu_and_devanagari(self) -> None:
+        self.assertTrue(contains_non_roman_hindi_script("یہ تو نے کیا کیا"))
+        self.assertTrue(contains_non_roman_hindi_script("यह तूने क्या किया"))
+        self.assertFalse(contains_non_roman_hindi_script("yeh tune kya kiya"))
+
+    @patch("backend.api.routes._save_meeting_to_db")
+    @patch("backend.api.routes._generate_summary_and_tasks")
+    @patch("backend.api.routes._transcribe_audio")
+    def test_pipeline_returns_and_stores_roman_hinglish_transcript(
+        self,
+        mock_transcribe,
+        mock_analyze,
+        mock_save,
+    ) -> None:
+        mock_transcribe.return_value = TranscriptionResponse(
+            filename="song.mp3",
+            transcript_text="یہ تو نے کیا کیا",
+            duration_seconds=58,
+        )
+        mock_analyze.return_value = MeetingAnalysis(
+            romanized_transcript="yeh tune kya kiya",
+            executive_summary="Yeh recording jazbaati geet par based hai.",
+            key_decisions=[],
+            action_items=[],
+            overall_sentiment="Udaas",
+        )
+
+        result = routes._run_pipeline("song.mp3", "song.mp3")
+
+        self.assertEqual(
+            result["transcription"]["transcript_text"],
+            "yeh tune kya kiya",
+        )
+        self.assertNotIn("romanized_transcript", result["intelligence"])
+        self.assertEqual(
+            mock_save.call_args.kwargs["transcript"],
+            "yeh tune kya kiya",
+        )
+
+    @patch("backend.services.llm_engine.create_gemini_llm")
+    def test_gemini_repairs_forbidden_script_once(self, mock_create_llm) -> None:
+        invalid = json.dumps(
+            {
+                "executive_summary": "یہ ایک گانا ہے",
+                "key_decisions": [],
+                "action_items": [],
+                "overall_sentiment": "Udaas",
+                "romanized_transcript": "یہ تو نے کیا کیا",
+            },
+            ensure_ascii=False,
+        )
+        repaired = json.dumps(
+            {
+                "executive_summary": "Yeh ek jazbaati gaana hai.",
+                "key_decisions": [],
+                "action_items": [],
+                "overall_sentiment": "Udaas",
+                "romanized_transcript": "yeh tune kya kiya",
+            }
+        )
+        mock_create_llm.return_value = FakeListLLM(responses=[invalid, repaired])
+
+        result = generate_summary_and_tasks("یہ تو نے کیا کیا")
+
+        self.assertEqual(result.romanized_transcript, "yeh tune kya kiya")
+        self.assertEqual(mock_create_llm.call_count, 2)
+
+    @patch("backend.services.llm_engine.create_gemini_llm")
+    def test_gemini_never_returns_forbidden_script(self, mock_create_llm) -> None:
+        invalid = json.dumps(
+            {
+                "executive_summary": "यह एक गाना है",
+                "key_decisions": [],
+                "action_items": [],
+                "overall_sentiment": "Udaas",
+                "romanized_transcript": "यह तूने क्या किया",
+            },
+            ensure_ascii=False,
+        )
+        mock_create_llm.return_value = FakeListLLM(responses=[invalid, invalid])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Gemini could not produce a Roman-script transcript",
+        ):
+            generate_summary_and_tasks("यह तूने क्या किया")
 
 
 class ApiRouteTests(unittest.TestCase):

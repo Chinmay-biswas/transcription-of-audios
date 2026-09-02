@@ -6,7 +6,7 @@ It replaces the local-only Streamlit, file-system, and ChromaDB pieces with:
 - Next.js for the web interface
 - Vercel Blob for browser-to-storage audio uploads
 - FastAPI + Docker + Whisper for audio transcription
-- Gemini for structured meeting intelligence and embeddings
+- Gemini for Roman Hinglish conversion, structured meeting intelligence, and embeddings
 - Qdrant Cloud for durable meeting search and chat
 
 The original project remains unchanged at:
@@ -23,6 +23,7 @@ The original project remains unchanged at:
     FastAPI container service
       - downloads the Blob object temporarily
       - transcribes with Whisper
+      - converts Hindi/Urdu speech to Roman Hinglish with Gemini
       - extracts summary, decisions, tasks with Gemini
       - stores embeddings and metadata in Qdrant Cloud
 

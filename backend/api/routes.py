@@ -133,6 +133,18 @@ def _run_pipeline(file_path: str, filename: str, blob_url: str | None = None) ->
             "Gemini could not analyze the transcript. Check GOOGLE_API_KEY, GEMINI_MODEL, and API quota.",
         ) from error
 
+    romanized_transcript = intelligence.romanized_transcript.strip()
+    if not romanized_transcript:
+        raise PipelineStageError(
+            "analysis",
+            "romanized_transcript_missing",
+            "Gemini did not return the Roman Hinglish transcript. Please retry the recording.",
+        )
+    transcription = transcription.model_copy(
+        update={"transcript_text": romanized_transcript}
+    )
+    intelligence_payload = intelligence.model_dump(exclude={"romanized_transcript"})
+
     meeting_id = str(uuid.uuid4())
 
     try:
@@ -140,7 +152,7 @@ def _run_pipeline(file_path: str, filename: str, blob_url: str | None = None) ->
             meeting_id=meeting_id,
             filename=filename,
             transcript=transcription.transcript_text,
-            summary=intelligence.model_dump(),
+            summary=intelligence_payload,
             blob_url=blob_url,
         )
     except Exception as error:
@@ -155,7 +167,7 @@ def _run_pipeline(file_path: str, filename: str, blob_url: str | None = None) ->
         "status": "success",
         "meeting_id": meeting_id,
         "transcription": transcription.model_dump(),
-        "intelligence": intelligence.model_dump(),
+        "intelligence": intelligence_payload,
     }
 
 
@@ -296,7 +308,7 @@ async def chat_with_meeting(payload: MeetingChatQuery) -> dict[str, Any]:
         if not documents:
             return {
                 "status": "success",
-                "answer": "I couldn't find relevant discussion in this meeting.",
+                "answer": "Mujhe is meeting mein relevant discussion nahi mili.",
                 "context_used": [],
             }
 
@@ -309,7 +321,7 @@ async def chat_with_meeting(payload: MeetingChatQuery) -> dict[str, Any]:
         if not chunk_summaries:
             return {
                 "status": "success",
-                "answer": "I found transcript chunks, but none answered that question.",
+                "answer": "Transcript mila, lekin usmein is sawaal ka jawab nahi tha.",
                 "context_used": documents,
             }
 

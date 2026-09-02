@@ -178,7 +178,10 @@ export default function UploadPage() {
       <div className="page-heading">
         <p className="eyebrow">New meeting</p>
         <h1>Upload and process audio</h1>
-        <p>Whisper creates the transcript; Gemini extracts decisions, tasks, and tone.</p>
+        <p>
+          Whisper transcribes the audio; Gemini returns Hindi or Urdu speech in Roman
+          Hinglish and extracts decisions, tasks, and tone.
+        </p>
       </div>
 
       <div className="upload-panel">
@@ -248,7 +251,7 @@ function MeetingResult({ result }: { result: PipelineResult }) {
       </div>
 
       <div className="result-grid">
-        <article className="panel transcript-panel">
+        <article className="panel transcript-panel" lang="hi-Latn" dir="ltr">
           <p className="panel-kicker">Transcript</p>
           <h2>What was said</h2>
           <p className="transcript-text">{transcription.transcript_text}</p>
@@ -264,12 +267,12 @@ function MeetingResult({ result }: { result: PipelineResult }) {
           </div>
 
           <h3>Executive summary</h3>
-          <p>{intelligence.executive_summary}</p>
+          <p lang="hi-Latn" dir="ltr">{intelligence.executive_summary}</p>
 
           <h3>Key decisions</h3>
           <ul className="decision-list">
             {intelligence.key_decisions.map((decision) => (
-              <li key={decision}>{decision}</li>
+              <li key={decision} lang="hi-Latn" dir="ltr">{decision}</li>
             ))}
           </ul>
 
@@ -288,9 +291,9 @@ function MeetingResult({ result }: { result: PipelineResult }) {
                 <tbody>
                   {intelligence.action_items.map((item, index) => (
                     <tr key={item.task + index}>
-                      <td>{item.task}</td>
-                      <td>{item.assignee || "Unassigned"}</td>
-                      <td>{item.due_date || "Not stated"}</td>
+                      <td lang="hi-Latn" dir="ltr">{item.task}</td>
+                      <td lang="hi-Latn" dir="ltr">{item.assignee || "Unassigned"}</td>
+                      <td lang="hi-Latn" dir="ltr">{item.due_date || "Not stated"}</td>
                       <td><span className={"priority priority-" + item.priority.toLowerCase()}>{item.priority}</span></td>
                     </tr>
                   ))}

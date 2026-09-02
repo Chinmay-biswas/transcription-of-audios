@@ -3,15 +3,36 @@
 from __future__ import annotations
 
 import os
+import re
+from typing import Any
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from backend.models.schemas import MeetingSummary
+from backend.models.schemas import MeetingAnalysis
 
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
+
+# Arabic ranges cover Urdu's Perso-Arabic characters; Devanagari is rejected too
+# because the product promises Roman-script Hinglish for Hindi/Urdu recordings.
+_NON_ROMAN_HINDI_SCRIPT = re.compile(
+    r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff"
+    r"\ufb50-\ufdff\ufe70-\ufeff\u0900-\u097f\ua8e0-\ua8ff]"
+)
+
+
+def contains_non_roman_hindi_script(value: Any) -> bool:
+    """Return whether nested output contains Urdu/Arabic or Devanagari text."""
+
+    if isinstance(value, str):
+        return bool(_NON_ROMAN_HINDI_SCRIPT.search(value))
+    if isinstance(value, dict):
+        return any(contains_non_roman_hindi_script(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(contains_non_roman_hindi_script(item) for item in value)
+    return False
 
 
 def create_gemini_llm() -> ChatGoogleGenerativeAI:
@@ -30,17 +51,29 @@ def create_gemini_llm() -> ChatGoogleGenerativeAI:
     )
 
 
-def generate_summary_and_tasks(transcript_text: str) -> MeetingSummary:
-    """Convert a transcript into the strict meeting intelligence schema."""
+def generate_summary_and_tasks(transcript_text: str) -> MeetingAnalysis:
+    """Convert a transcript into Roman-script text and meeting intelligence."""
 
     if not transcript_text.strip():
         raise ValueError("Transcript text is empty. Cannot generate summary.")
 
-    parser = PydanticOutputParser(pydantic_object=MeetingSummary)
+    parser = PydanticOutputParser(pydantic_object=MeetingAnalysis)
     prompt = PromptTemplate(
         template="""
 You are an expert enterprise business analyst. Review this meeting transcript
 and extract the key intelligence accurately.
+
+LANGUAGE AND SCRIPT REQUIREMENTS:
+- `romanized_transcript` must be a faithful cleaned transcript using Latin
+  characters only.
+- When the recording is Hindi, Urdu, or mixed Hindi-English, transliterate its
+  spoken words into natural Roman Hinglish. Do not translate the transcript into
+  English. Example: "yeh tune kya kiya", not Urdu or Devanagari script.
+- For a mostly Hindi/Urdu/Hinglish recording, write the executive summary, key
+  decisions, action items, and sentiment in concise natural Roman Hinglish too.
+- For an English recording, keep the transcript and intelligence in English.
+- Never emit Perso-Arabic/Urdu or Devanagari characters anywhere in the output.
+- Preserve names, numbers, meaning, and code-switched English terms.
 
 {format_instructions}
 
@@ -52,7 +85,41 @@ and extract the key intelligence accurately.
     )
 
     chain = prompt | create_gemini_llm() | parser
-    return chain.invoke({"transcript": transcript_text})
+    analysis = chain.invoke({"transcript": transcript_text})
+    if not contains_non_roman_hindi_script(analysis.model_dump()):
+        return analysis
+
+    # Gemini normally follows the script rule on the first pass. If it does not,
+    # repair the structured result once rather than exposing Urdu/Devanagari text.
+    repair_prompt = PromptTemplate(
+        template="""
+Rewrite this structured meeting analysis using Latin characters only.
+
+For Hindi, Urdu, or mixed Hindi-English speech, use natural Roman Hinglish.
+Transliterate the original spoken words faithfully; do not translate the
+transcript into English. Preserve the facts and the exact structured schema.
+Never output Perso-Arabic/Urdu or Devanagari characters.
+
+{format_instructions}
+
+--- ORIGINAL TRANSCRIPT ---
+{transcript}
+
+--- DRAFT ANALYSIS TO REPAIR ---
+{analysis_json}
+""",
+        input_variables=["transcript", "analysis_json"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    repaired = (repair_prompt | create_gemini_llm() | parser).invoke(
+        {
+            "transcript": transcript_text,
+            "analysis_json": analysis.model_dump_json(),
+        }
+    )
+    if contains_non_roman_hindi_script(repaired.model_dump()):
+        raise ValueError("Gemini could not produce a Roman-script transcript.")
+    return repaired
 
 
 def extract_relevant_info_from_chunk(chunk: str, question: str) -> str:
@@ -64,6 +131,10 @@ You are a meticulous meeting-data extractor. Review one transcript chunk.
 Extract and summarize only information relevant to the user's question.
 If the chunk contains no relevant information, output exactly:
 No relevant information.
+
+When the meeting is Hindi, Urdu, or Hinglish, write relevant information in
+natural Roman Hinglish using Latin characters only. Never use Perso-Arabic/Urdu
+or Devanagari script. For an English meeting, use English.
 
 TEXT CHUNK:
 {chunk}
@@ -88,6 +159,10 @@ def generate_rag_answer(question: str, context: str) -> str:
 You are a helpful meeting assistant. Answer the user's question using only the
 provided meeting transcript context. If the answer is not contained in the
 context, say: I cannot find the answer to this in the meeting transcript.
+
+When the meeting or question is Hindi, Urdu, or Hinglish, answer in natural
+Roman Hinglish using Latin characters only. Never use Perso-Arabic/Urdu or
+Devanagari script. For an English meeting and English question, use English.
 
 CONTEXT:
 {context}

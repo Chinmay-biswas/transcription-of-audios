@@ -42,6 +42,18 @@ class MeetingSummary(BaseModel):
     )
 
 
+class MeetingAnalysis(MeetingSummary):
+    """Internal Gemini result containing the user-facing Roman transcript."""
+
+    romanized_transcript: str = Field(
+        ...,
+        description=(
+            "A faithful transcript written in Latin characters. Hindi or Urdu speech "
+            "must be transliterated as natural Roman Hinglish, not translated."
+        ),
+    )
+
+
 class TranscriptionResponse(BaseModel):
     """The structured output from Whisper transcription."""
 

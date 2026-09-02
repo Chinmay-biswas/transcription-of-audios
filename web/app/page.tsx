@@ -9,7 +9,7 @@ const features = [
   {
     number: "02",
     title: "Extract signal",
-    description: "Whisper transcription and Gemini analysis produce clear decisions and tasks."
+    description: "Whisper transcription, Roman Hinglish conversion, and Gemini analysis produce clear decisions and tasks."
   },
   {
     number: "03",
