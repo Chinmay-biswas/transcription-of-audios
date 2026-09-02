@@ -17,7 +17,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
 def create_gemini_llm() -> ChatGoogleGenerativeAI:
     """Create the shared Gemini chat model from the server-side environment."""
 
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not configured.")
 
@@ -25,6 +25,8 @@ def create_gemini_llm() -> ChatGoogleGenerativeAI:
         model=GEMINI_MODEL,
         temperature=0,
         api_key=api_key,
+        retries=2,
+        request_timeout=60,
     )
 
 

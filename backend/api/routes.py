@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import tempfile
@@ -16,22 +17,18 @@ from backend.services.blob_storage import (
     download_blob_to_tempfile,
     ensure_supported_filename,
 )
-from backend.services.llm_engine import (
-    extract_relevant_info_from_chunk,
-    generate_rag_answer,
-    generate_summary_and_tasks,
-)
-from backend.services.transcription import transcribe_audio
-from backend.services.vector_store import (
-    get_all_meetings,
-    get_meeting_analytics,
-    save_meeting_to_db,
-    search_meetings,
-    search_specific_meeting,
-)
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+class PipelineStageError(RuntimeError):
+    def __init__(self, stage: str, code: str, public_message: str) -> None:
+        super().__init__(public_message)
+        self.stage = stage
+        self.code = code
+        self.public_message = public_message
 
 
 class SearchQuery(BaseModel):
@@ -61,18 +58,98 @@ def _save_small_upload_to_tempfile(file: UploadFile) -> str:
         return output.name
 
 
+def _transcribe_audio(file_path: str, filename: str):
+    from backend.services.transcription import transcribe_audio
+
+    return transcribe_audio(file_path, filename=filename)
+
+
+def _generate_summary_and_tasks(transcript_text: str):
+    from backend.services.llm_engine import generate_summary_and_tasks
+
+    return generate_summary_and_tasks(transcript_text)
+
+
+def _save_meeting_to_db(**kwargs: Any) -> None:
+    from backend.services.vector_store import save_meeting_to_db
+
+    save_meeting_to_db(**kwargs)
+
+
+def _search_meetings(query: str):
+    from backend.services.vector_store import search_meetings
+
+    return search_meetings(query)
+
+
+def _search_specific_meeting(query: str, meeting_id: str):
+    from backend.services.vector_store import search_specific_meeting
+
+    return search_specific_meeting(query, meeting_id)
+
+
+def _get_all_meetings():
+    from backend.services.vector_store import get_all_meetings
+
+    return get_all_meetings()
+
+
+def _get_meeting_analytics():
+    from backend.services.vector_store import get_meeting_analytics
+
+    return get_meeting_analytics()
+
+
+def _extract_relevant_info_from_chunk(chunk: str, question: str) -> str:
+    from backend.services.llm_engine import extract_relevant_info_from_chunk
+
+    return extract_relevant_info_from_chunk(chunk, question)
+
+
+def _generate_rag_answer(question: str, context: str) -> str:
+    from backend.services.llm_engine import generate_rag_answer
+
+    return generate_rag_answer(question, context)
+
+
 def _run_pipeline(file_path: str, filename: str, blob_url: str | None = None) -> dict[str, Any]:
-    transcription = transcribe_audio(file_path, filename=filename)
-    intelligence = generate_summary_and_tasks(transcription.transcript_text)
+    try:
+        transcription = _transcribe_audio(file_path, filename)
+    except Exception as error:
+        logger.exception("Meeting pipeline transcription stage failed")
+        raise PipelineStageError(
+            "transcription",
+            "transcription_failed",
+            "Whisper could not transcribe this recording. Confirm the audio is a valid MP3, WAV, or M4A file.",
+        ) from error
+
+    try:
+        intelligence = _generate_summary_and_tasks(transcription.transcript_text)
+    except Exception as error:
+        logger.exception("Meeting pipeline Gemini analysis stage failed")
+        raise PipelineStageError(
+            "analysis",
+            "gemini_analysis_failed",
+            "Gemini could not analyze the transcript. Check GOOGLE_API_KEY, GEMINI_MODEL, and API quota.",
+        ) from error
+
     meeting_id = str(uuid.uuid4())
 
-    save_meeting_to_db(
-        meeting_id=meeting_id,
-        filename=filename,
-        transcript=transcription.transcript_text,
-        summary=intelligence.model_dump(),
-        blob_url=blob_url,
-    )
+    try:
+        _save_meeting_to_db(
+            meeting_id=meeting_id,
+            filename=filename,
+            transcript=transcription.transcript_text,
+            summary=intelligence.model_dump(),
+            blob_url=blob_url,
+        )
+    except Exception as error:
+        logger.exception("Meeting pipeline Qdrant storage stage failed")
+        raise PipelineStageError(
+            "storage",
+            "qdrant_storage_failed",
+            "Qdrant could not store the processed meeting. Check QDRANT_URL, QDRANT_API_KEY, and the collection configuration.",
+        ) from error
 
     return {
         "status": "success",
@@ -84,6 +161,16 @@ def _run_pipeline(file_path: str, filename: str, blob_url: str | None = None) ->
 
 def _as_http_error(error: Exception) -> HTTPException:
     message = str(error)
+    if isinstance(error, PipelineStageError):
+        status_code = 500 if error.stage == "transcription" else 502
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "message": error.public_message,
+                "stage": error.stage,
+                "code": error.code,
+            },
+        )
     if "not configured" in message:
         return HTTPException(
             status_code=503,
@@ -96,6 +183,38 @@ def _as_http_error(error: Exception) -> HTTPException:
         status_code=500,
         detail="Processing failed. Check the Vercel function logs for details.",
     )
+
+
+@router.get("/health")
+def service_health() -> dict[str, Any]:
+    """Return a secret-free readiness check for the processing service."""
+
+    required_settings = ("GOOGLE_API_KEY", "QDRANT_URL", "QDRANT_API_KEY")
+    missing = [name for name in required_settings if not os.environ.get(name, "").strip()]
+    invalid: list[str] = []
+
+    try:
+        from backend.services.blob_storage import _max_audio_bytes
+
+        _max_audio_bytes()
+    except ValueError as error:
+        invalid.append(str(error))
+
+    raw_dimensions = os.environ.get("GEMINI_EMBEDDING_DIMENSIONS", "").strip() or "768"
+    try:
+        embedding_dimensions = int(raw_dimensions)
+        if embedding_dimensions <= 0:
+            raise ValueError
+    except ValueError:
+        invalid.append("GEMINI_EMBEDDING_DIMENSIONS must be a positive integer.")
+
+    ready = not missing and not invalid
+    return {
+        "status": "ok" if ready else "configuration_required",
+        "ready": ready,
+        "missing_settings": missing,
+        "invalid_settings": invalid,
+    }
 
 
 @router.post("/process-meeting")
@@ -146,7 +265,7 @@ async def process_blob(payload: BlobProcessRequest) -> dict[str, Any]:
 @router.post("/search")
 async def search_history(query: SearchQuery) -> dict[str, Any]:
     try:
-        return {"status": "success", "results": search_meetings(query.query)}
+        return {"status": "success", "results": _search_meetings(query.query)}
     except Exception as error:
         raise _as_http_error(error) from error
 
@@ -154,7 +273,7 @@ async def search_history(query: SearchQuery) -> dict[str, Any]:
 @router.get("/meetings")
 async def list_meetings() -> dict[str, Any]:
     try:
-        return {"status": "success", "meetings": get_all_meetings()}
+        return {"status": "success", "meetings": _get_all_meetings()}
     except Exception as error:
         raise _as_http_error(error) from error
 
@@ -162,7 +281,7 @@ async def list_meetings() -> dict[str, Any]:
 @router.get("/analytics")
 async def analytics() -> dict[str, Any]:
     try:
-        return {"status": "success", **get_meeting_analytics()}
+        return {"status": "success", **_get_meeting_analytics()}
     except Exception as error:
         raise _as_http_error(error) from error
 
@@ -172,7 +291,7 @@ async def chat_with_meeting(payload: MeetingChatQuery) -> dict[str, Any]:
     """Answer a question only from chunks indexed for the selected meeting."""
 
     try:
-        search_results = search_specific_meeting(payload.query, payload.meeting_id)
+        search_results = _search_specific_meeting(payload.query, payload.meeting_id)
         documents = search_results.get("documents", [[]])[0]
         if not documents:
             return {
@@ -183,7 +302,7 @@ async def chat_with_meeting(payload: MeetingChatQuery) -> dict[str, Any]:
 
         chunk_summaries = []
         for index, chunk in enumerate(documents):
-            summary = extract_relevant_info_from_chunk(chunk, payload.query)
+            summary = _extract_relevant_info_from_chunk(chunk, payload.query)
             if "No relevant information" not in summary:
                 chunk_summaries.append(f"Source {index + 1}: {summary}")
 
@@ -194,7 +313,7 @@ async def chat_with_meeting(payload: MeetingChatQuery) -> dict[str, Any]:
                 "context_used": documents,
             }
 
-        answer = generate_rag_answer(payload.query, "\n\n".join(chunk_summaries))
+        answer = _generate_rag_answer(payload.query, "\n\n".join(chunk_summaries))
         return {
             "status": "success",
             "answer": answer,

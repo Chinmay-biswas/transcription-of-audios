@@ -3,10 +3,15 @@
 import { uploadPresigned } from "@vercel/blob/client";
 import { ChangeEvent, useEffect, useState } from "react";
 
-import { apiRequest, PipelineResult } from "@/lib/api";
+import { ApiHealthResponse, apiRequest, PipelineResult } from "@/lib/api";
 
 const maxFileBytes = 100 * 1024 * 1024;
 const acceptedExtensions = [".mp3", ".wav", ".m4a"];
+
+type UploadedRecording = {
+  fingerprint: string;
+  url: string;
+};
 
 function isSupportedAudio(file: File): boolean {
   return acceptedExtensions.some((extension) => file.name.toLowerCase().endsWith(extension));
@@ -18,6 +23,10 @@ function safeFilename(filename: string): string {
 
 function readableFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function fileFingerprint(file: File): string {
+  return [file.name, file.size, file.lastModified, file.type].join(":");
 }
 
 async function getBlobSetupError(): Promise<string | null> {
@@ -54,6 +63,7 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedRecording, setUploadedRecording] = useState<UploadedRecording | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PipelineResult | null>(null);
@@ -71,6 +81,7 @@ export default function UploadPage() {
     setResult(null);
     setError(null);
     setUploadProgress(0);
+    setUploadedRecording(null);
 
     if (!selected) {
       setFile(null);
@@ -106,24 +117,44 @@ export default function UploadPage() {
     setUploadProgress(1);
 
     try {
+      const health = await apiRequest<ApiHealthResponse>("/health", { cache: "no-store" });
+      if (!health.ready) {
+        const problems = [
+          health.missing_settings.length
+            ? "Missing: " + health.missing_settings.join(", ") + "."
+            : "",
+          ...health.invalid_settings
+        ].filter(Boolean);
+        throw new Error("The processing service is not configured. " + problems.join(" "));
+      }
+
       const setupError = await getBlobSetupError();
       if (setupError) {
         throw new Error(setupError);
       }
 
-      const blob = await uploadPresigned("meetings/" + safeFilename(file.name), file, {
-        access: "public",
-        handleUploadUrl: "/api/blob/upload",
-        multipart: true,
-        onUploadProgress: ({ percentage }) => setUploadProgress(Math.round(percentage))
-      });
+      const fingerprint = fileFingerprint(file);
+      let blobUrl = uploadedRecording?.fingerprint === fingerprint
+        ? uploadedRecording.url
+        : null;
+
+      if (!blobUrl) {
+        const blob = await uploadPresigned("meetings/" + safeFilename(file.name), file, {
+          access: "public",
+          handleUploadUrl: "/api/blob/upload",
+          multipart: true,
+          onUploadProgress: ({ percentage }) => setUploadProgress(Math.round(percentage))
+        });
+        blobUrl = blob.url;
+        setUploadedRecording({ fingerprint, url: blobUrl });
+      }
 
       setUploadProgress(100);
       const pipelineResult = await apiRequest<PipelineResult>("/process-blob", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          blob_url: blob.url,
+          blob_url: blobUrl,
           filename: file.name,
           content_type: file.type || null
         })

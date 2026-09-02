@@ -8,7 +8,9 @@
     "api": {
       "root": "backend",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel"
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 2048,
+      "maxDuration": 300
     }
   },
   "rewrites": [

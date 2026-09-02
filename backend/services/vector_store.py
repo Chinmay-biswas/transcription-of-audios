@@ -45,6 +45,7 @@ def _client() -> QdrantClient:
         url=_required_setting("QDRANT_URL"),
         api_key=_required_setting("QDRANT_API_KEY"),
         prefer_grpc=False,
+        timeout=30,
     )
 
 
@@ -54,6 +55,7 @@ def _embeddings() -> GoogleGenerativeAIEmbeddings:
         model=_optional_setting("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
         api_key=_required_setting("GOOGLE_API_KEY"),
         output_dimensionality=_embedding_dimensions(),
+        request_options={"timeout": 60},
     )
 
 

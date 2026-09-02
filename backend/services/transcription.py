@@ -17,7 +17,9 @@ def get_model():
     """Load Whisper only when the first transcription is requested."""
 
     model_name = os.environ.get("WHISPER_MODEL", "").strip() or "base"
-    download_root = os.environ.get("WHISPER_MODEL_DIR", "").strip() or None
+    configured_root = os.environ.get("WHISPER_MODEL_DIR", "").strip()
+    baked_model_root = "/opt/whisper" if Path("/opt/whisper").is_dir() else None
+    download_root = configured_root or baked_model_root
     print(f"Loading Whisper model '{model_name}' into memory...")
     return whisper.load_model(model_name, download_root=download_root)
 
